@@ -44,9 +44,10 @@ extern "C" {
 #include "THSensor_base.h"
 #include "TH02_dev.h"
 #include "Air_Quality_Sensor.h"
+#include <thread>
 //#include "coap3/coap.h"
 
-#if CONFIG_OPENTHREAD_STATE_INDICATOR_ENABLE
+#if CONFIG_OPENTHREAD_STATE_INDICATOR_ENABLE    // RGB according to role in Thread
 #include "ot_led_strip.h"
 #endif
 #if CONFIG_OPENTHREAD_CLI_ESP_EXTENSION
@@ -55,11 +56,24 @@ extern "C" {
 
 #define TAG "ot_esp_cli"
 
-#include "sensor_loop_utils.h"
+// #include "sensor_loop_utils.h"
 
 #include "led_strip.h"
 
-#define REMOTE_IP "2003:cf:3704:8a34:24b6:80ca:e497:cc39"    // IPv6 Adresse vom Server
+#define SLEEP_MS 1000  // Task Loop interval in milliseconds
+
+#define REMOTE_PORT 18090
+
+// #define GROVER_TEMP_HUM
+//#define GROVER_AIR_Q
+//#define SENSIRION_SCD30
+//#define ASAIR_AM2302
+
+#define BULTIN_LED GPIO_NUM_8
+#define LED_STRIP_GPIO GPIO_NUM_22
+#define LED_STRIP_LENGTH 50
+
+#define REMOTE_IP "fd59:30c5:5d96:0:94cd:7bb8:c0ad:3ea5"    // IPv6 Adresse vom Server
 
 #if defined (GROVER_TEMP_HUM)
 otCoapResource hum;
@@ -72,7 +86,7 @@ AirQualitySensor air_sensor(GPIO_NUM_1);
 
 static otUdpSocket udp_socket;
 static led_strip_handle_t led_strip;
-otCoapResource sLightResource;
+otCoapResource ledResource;
 otCoapResource core;
 
 #if defined (GROVER_TEMP_HUM)
@@ -115,6 +129,7 @@ static void handleTempGET(void *aContext, otMessage *aMessage, const otMessageIn
     cJSON_AddNumberToObject(tmp_json, "temperature", TH02.ReadTemperature());
     char *string_json = cJSON_Print(tmp_json);
     otMessageAppend(response, (const uint8_t *)string_json, strlen(string_json));
+    cJSON_Delete(tmp_json);
 
     // Send the CoAP request
     error = otCoapSendResponse(esp_openthread_get_instance(), response, &messageInfo);
@@ -165,6 +180,7 @@ static void handleHumGET(void *aContext, otMessage *aMessage, const otMessageInf
     cJSON_AddNumberToObject(hum_json, "humidity", TH02.ReadHumidity());
     char *string_json = cJSON_Print(hum_json);
     otMessageAppend(response, (const uint8_t *)string_json, strlen(string_json));
+    cJSON_Delete(hum_json);
 
     // Send the CoAP request
     error = otCoapSendResponse(esp_openthread_get_instance(), response, &messageInfo);
@@ -216,6 +232,7 @@ static void handleAirQGET(void *aContext, otMessage *aMessage, const otMessageIn
     cJSON_AddNumberToObject(airQ, "airquality", air_sensor.getValue(););
     char *string_json = cJSON_Print(airQ_json);
     otMessageAppend(response, (const uint8_t *)string_json, strlen(string_json));
+    cJSON_Delete(airQ_json);
 
     // Send the CoAP request
     error = otCoapSendResponse(esp_openthread_get_instance(), response, &messageInfo);
@@ -227,6 +244,18 @@ static void handleAirQGET(void *aContext, otMessage *aMessage, const otMessageIn
     }
 }
 #endif
+
+void run_LEDs(led_strip_handle_t *led_strip, int g, int r, int b){
+        ESP_ERROR_CHECK(led_strip_clear(*led_strip));
+
+        for(int i = 0; i < LED_STRIP_LENGTH; i++){
+            ESP_ERROR_CHECK(led_strip_set_pixel(*led_strip, i, g, r, b));
+            ESP_ERROR_CHECK(led_strip_refresh(*led_strip));
+            vTaskDelay(pdMS_TO_TICKS(0.05 * SLEEP_MS));
+            ESP_ERROR_CHECK(led_strip_set_pixel(*led_strip, i, 0, 0, 0));
+            ESP_ERROR_CHECK(led_strip_refresh(*led_strip));
+        }
+}
 
 static void handleLEDPostRequest(void *aContext, otMessage *aMessage, const otMessageInfo *aMessageInfo){
     otCoapCode coapCode = otCoapMessageGetCode(aMessage);
@@ -273,13 +302,10 @@ static void handleLEDPostRequest(void *aContext, otMessage *aMessage, const otMe
         otCoapMessageSetToken(response, otCoapMessageGetToken(aMessage), otCoapMessageGetTokenLength(aMessage));
         otCoapMessageSetPayloadMarker(response);
 
-        ESP_ERROR_CHECK(led_strip_clear(led_strip));
-        ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, 0, r, g, b));
-        ESP_ERROR_CHECK(led_strip_refresh(led_strip));
-
         // Add the response payload
-        const char *responsePayload = "LED set accordingly";
-        otMessageAppend(response, responsePayload, strlen(responsePayload));
+        std::string responsePayload = "LED set to ";
+        responsePayload += ("red: " + std::to_string(r) + ", green: " + std::to_string(g) + ", blue: " + std::to_string(b));
+        otMessageAppend(response, (const void *)responsePayload.data(), responsePayload.size());
 
         // Send the response
         error = otCoapSendResponse(esp_openthread_get_instance(), response, aMessageInfo);
@@ -288,6 +314,8 @@ static void handleLEDPostRequest(void *aContext, otMessage *aMessage, const otMe
             otMessageFree(response);
             otPlatLog(OT_LOG_LEVEL_CRIT, OT_LOG_REGION_COAP, "Failed to send CoAP response: %s", otThreadErrorToString(error));
         }
+        std::thread led_runner(run_LEDs, &led_strip, g, r, b);
+        led_runner.detach();
     }
     else
     {
@@ -380,13 +408,21 @@ void initCoapServer(otInstance *aInstance)
     otCoapAddResource(aInstance, &qirQ);
     #endif
     // Initialize the CoAP WS2812b LED resource
-    sLightResource.mUriPath = "led";
-    sLightResource.mHandler = handleLEDPostRequest;
-    sLightResource.mContext = NULL;
-    sLightResource.mNext = NULL;
+    ledResource.mUriPath = "led";
+    ledResource.mHandler = handleLEDPostRequest;
+    ledResource.mContext = NULL;
+    ledResource.mNext = NULL;
 
     // Register the resource with the CoAP server
-    otCoapAddResource(aInstance, &sLightResource);
+    otCoapAddResource(aInstance, &ledResource);
+
+    // location.mUriPath = "set_location";
+    // location.mHandler = handleLocationPOST;
+    // location.mContext = NULL;
+    // location.mNext = NULL;
+
+    // otCoapAddResource(aInstance, location);
+
 }
 
 void coap_response_handler(void *aContext, otMessage *aMessage, const otMessageInfo *aMessageInfo, otError aResult)
@@ -504,7 +540,7 @@ void send_coap_request_sensor_data(otInstance *instance, const char *message, co
     // Prepare the CoAP header
     otCoapMessageInit(request, OT_COAP_TYPE_NON_CONFIRMABLE, OT_COAP_CODE_POST); //OT_COAP_TYPE_CONFIRMABLE
     otCoapMessageGenerateToken(request, OT_COAP_DEFAULT_TOKEN_LENGTH);
-    otCoapMessageAppendUriPathOptions(request, "hello_test");
+    otCoapMessageAppendUriPathOptions(request, "sensor"); // besser otCoapMessageAppendProxyUriOption ??
 
 
     // Set the destination address
@@ -534,9 +570,10 @@ void send_coap_request_sensor_data(otInstance *instance, const char *message, co
 static void sensor_data_loop(void *param) {
     vTaskDelay(pdMS_TO_TICKS(2*SLEEP_MS));
     
+    // init the lead strip
     led_strip_config_t strip_config = {
-        .strip_gpio_num = GPIO_NUM_8,  // The GPIO that connected to the LED strip's data line
-        .max_leds = 1,                 // The number of LEDs in the strip,
+        .strip_gpio_num = LED_STRIP_GPIO,  // The GPIO that connected to the LED strip's data line
+        .max_leds = 50,                 // The number of LEDs in the strip,
         .led_model = LED_MODEL_WS2812, // LED strip model, it determines the bit timing
         .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB, // The color component format is G-R-B
         .flags = {
