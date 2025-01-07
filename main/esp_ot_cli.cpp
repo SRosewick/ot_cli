@@ -37,6 +37,7 @@ extern "C" {
 #include <openthread/platform/time.h>
 #include <openthread/link.h>
 #include <cJSON.h>
+#include <openthread/nat64.h> 
 }
 
 #include <Arduino.h>
@@ -56,6 +57,7 @@ extern "C" {
 
 #define TAG "ot_esp_cli"
 
+
 // #include "sensor_loop_utils.h"
 
 #include "led_strip.h"
@@ -64,16 +66,19 @@ extern "C" {
 
 #define REMOTE_PORT 18090
 
-// #define GROVER_TEMP_HUM
-//#define GROVER_AIR_Q
+//#define GROVER_TEMP_HUM
+#define GROVER_AIR_Q
 //#define SENSIRION_SCD30
 //#define ASAIR_AM2302
 
 #define BULTIN_LED GPIO_NUM_8
+
+#define LED_STRIP
 #define LED_STRIP_GPIO GPIO_NUM_22
 #define LED_STRIP_LENGTH 50
 
 #define REMOTE_IP "fd59:30c5:5d96:0:94cd:7bb8:c0ad:3ea5"    // IPv6 Adresse vom Server
+#define REMOTE_IPV4 "10.0.32.22"
 
 #if defined (GROVER_TEMP_HUM)
 otCoapResource hum;
@@ -86,7 +91,11 @@ AirQualitySensor air_sensor(GPIO_NUM_1);
 
 static otUdpSocket udp_socket;
 static led_strip_handle_t led_strip;
+
+#if defined (LED_STRIP)
 otCoapResource ledResource;
+#endif
+
 otCoapResource core;
 
 #if defined (GROVER_TEMP_HUM)
@@ -229,7 +238,7 @@ static void handleAirQGET(void *aContext, otMessage *aMessage, const otMessageIn
     otCoapMessageSetPayloadMarker(response);
 
     cJSON *airQ_json = cJSON_CreateObject();
-    cJSON_AddNumberToObject(airQ, "airquality", air_sensor.getValue(););
+    cJSON_AddNumberToObject(airQ_json, "airquality", air_sensor.getValue());
     char *string_json = cJSON_Print(airQ_json);
     otMessageAppend(response, (const uint8_t *)string_json, strlen(string_json));
     cJSON_Delete(airQ_json);
@@ -257,7 +266,8 @@ void run_LEDs(led_strip_handle_t *led_strip, int g, int r, int b){
         }
 }
 
-static void handleLEDPostRequest(void *aContext, otMessage *aMessage, const otMessageInfo *aMessageInfo){
+#if defined (LED_STRIP)
+static void handleLEDStripPostRequest(void *aContext, otMessage *aMessage, const otMessageInfo *aMessageInfo){
     otCoapCode coapCode = otCoapMessageGetCode(aMessage);
     otError error;
     if (coapCode == OT_COAP_CODE_POST)
@@ -322,6 +332,7 @@ static void handleLEDPostRequest(void *aContext, otMessage *aMessage, const otMe
         otPlatLog(OT_LOG_LEVEL_WARN, OT_LOG_REGION_COAP, "Unsupported CoAP request code");
     }
 }
+#endif
 
 static void handleCoREFormatDescription(void *aContext, otMessage *aMessage, const otMessageInfo *aMessageInfo){
     ESP_LOGI(TAG, "GOT CORE REQUEST");
@@ -366,7 +377,11 @@ static void handleCoREFormatDescription(void *aContext, otMessage *aMessage, con
     #elif defined (GROVER_AIR_Q)
     core+= "</sensors/airquality>;rt=\"AirQualitymV\";if=\"sensor\",";
     #endif
-    core += "</led>;rt=\"WS2812b\";if=\"actuator\"";
+    #if defined (LED_STRIP)
+    core += "</led>;rt=\"WS2812b Strip\";if=\"actuator\"",;
+    #endif
+    core += "</builtin_led>;rt=\"WS2812b Strip\";if=\"actuator\"";
+    
     otMessageAppend(response, (const uint8_t *)core.data(), core.size());
 
     // Send the CoAP request
@@ -401,20 +416,21 @@ void initCoapServer(otInstance *aInstance)
     otCoapAddResource(aInstance, &temp);
     otCoapAddResource(aInstance, &hum);
     #elif defined (GROVER_AIR_Q)
-    air.QmUriPath = "airquality";
-    air.QmHandler = handleAirQGET;
-    air.QmContext = NULL;
-    air.QmNext = NULL;
-    otCoapAddResource(aInstance, &qirQ);
+    airQ.mUriPath = "airquality";
+    airQ.mHandler = handleAirQGET;
+    airQ.mContext = NULL;
+    airQ.mNext = NULL;
+    otCoapAddResource(aInstance, &airQ);
     #endif
+    #if defined (LED_STRIP)
     // Initialize the CoAP WS2812b LED resource
     ledResource.mUriPath = "led";
-    ledResource.mHandler = handleLEDPostRequest;
+    ledResource.mHandler = handleLEDStripPostRequest;
     ledResource.mContext = NULL;
     ledResource.mNext = NULL;
-
     // Register the resource with the CoAP server
     otCoapAddResource(aInstance, &ledResource);
+    #endif
 
     // location.mUriPath = "set_location";
     // location.mHandler = handleLocationPOST;
@@ -566,6 +582,61 @@ void send_coap_request_sensor_data(otInstance *instance, const char *message, co
     }
 }
 
+void send_coap_request_sensor_data_nat64(otInstance *instance, const char *message)
+{
+    if(instance == NULL){
+        ESP_LOGI(TAG, "Instance is Null");
+        return;
+    }
+    otError error;
+    otMessage *request;
+    otMessageInfo messageInfo;
+    otMessageSettings messageSettings;
+
+    otIp4Address ipv4_addr;
+    otIp6Address ipv6_addr;
+    otIp4AddressFromString(REMOTE_IPV4, &ipv4_addr);
+
+    otNat64SynthesizeIp6Address(esp_openthread_get_instance(), &ipv4_addr, &ipv6_addr);
+    
+
+    // Create a CoAP message
+    messageSettings.mLinkSecurityEnabled = true; // BR will drop Message if set to false
+    messageSettings.mPriority = OT_MESSAGE_PRIORITY_NORMAL;
+
+    request = otCoapNewMessage(instance, &messageSettings);
+    if (request == NULL) {
+        ESP_LOGI(TAG, "Failed to allocate CoAP message\n");
+        return;
+    }
+    // Prepare the CoAP header
+    otCoapMessageInit(request, OT_COAP_TYPE_NON_CONFIRMABLE, OT_COAP_CODE_POST); //OT_COAP_TYPE_CONFIRMABLE
+    otCoapMessageGenerateToken(request, OT_COAP_DEFAULT_TOKEN_LENGTH);
+    otCoapMessageAppendUriPathOptions(request, "sensor"); // besser otCoapMessageAppendProxyUriOption ??
+
+
+    // Set the destination address
+    memset(&messageInfo, 0, sizeof(messageInfo));
+    messageInfo.mPeerAddr = ipv6_addr;
+    messageInfo.mPeerPort = OT_DEFAULT_COAP_PORT; //5683
+    
+    // Content Type e.g. Plain Text or JSON
+    otCoapMessageAppendContentFormatOption(request, OT_COAP_OPTION_CONTENT_FORMAT_JSON); //OT_COAP_OPTION_CONTENT_FORMAT_TEXT_PLAIN
+    
+    // Marker to indicate that there is a payload and where it begins
+    otCoapMessageSetPayloadMarker(request);
+
+    otMessageAppend(request, (const uint8_t *)message, strlen(message));
+
+    // Send the CoAP request
+    error = otCoapSendRequest(instance, request, &messageInfo, coap_response_handler, NULL);
+    if (error != OT_ERROR_NONE) {
+        ESP_LOGE(TAG, "Failed to send CoAP request: %s\n", otThreadErrorToString(error));
+        otMessageFree(request);
+    } else {
+        ESP_LOGI(TAG, "Sending Succes");
+    }
+}
 
 static void sensor_data_loop(void *param) {
     vTaskDelay(pdMS_TO_TICKS(2*SLEEP_MS));
@@ -720,7 +791,8 @@ static void sensor_data_loop(void *param) {
         cJSON_AddItemToObject(root, "neighbor_rssi", rssi);
         //udp_client_send_message(instance, cJSON_Print(root), &destAddr);
         //ESP_LOGI(TAG, "%s", cJSON_Print(root));
-        send_coap_request_sensor_data(instance, cJSON_Print(root), &destAddr);
+        //send_coap_request_sensor_data(instance, cJSON_Print(root), &destAddr);
+        send_coap_request_sensor_data_nat64(instance, cJSON_Print(root));
         cJSON_Delete(root);
         vTaskDelay(pdMS_TO_TICKS(5*SLEEP_MS));
         
