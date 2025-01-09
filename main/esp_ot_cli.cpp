@@ -66,14 +66,14 @@ extern "C" {
 
 #define REMOTE_PORT 18090
 
-//#define GROVER_TEMP_HUM
+// #define GROVER_TEMP_HUM
 #define GROVER_AIR_Q
 //#define SENSIRION_SCD30
 //#define ASAIR_AM2302
+//#define LED_STRIP
 
 #define BULTIN_LED GPIO_NUM_8
 
-#define LED_STRIP
 #define LED_STRIP_GPIO GPIO_NUM_22
 #define LED_STRIP_LENGTH 50
 
@@ -97,6 +97,44 @@ otCoapResource ledResource;
 #endif
 
 otCoapResource core;
+
+void AddUnicastAddress(otInstance *aInstance)
+{
+    otError error;
+    otNetifAddress address;
+
+    memset(&address, 0, sizeof(address));
+
+    otIp4Address ip4Addr;
+    otIp6Address ip6Addr;
+    otIp4AddressFromString("10.0.32.204", &ip4Addr);
+
+    otNat64SynthesizeIp6Address(aInstance, &ip4Addr, &ip6Addr);
+
+    address.mAddress = ip6Addr;
+
+    address.mPrefixLength = 64;
+
+    address.mAddressOrigin = OT_ADDRESS_ORIGIN_MANUAL;
+
+    address.mPreferred = false;
+    address.mValid = true;
+
+    // Add the unicast address to the Thread interface
+    error = otIp6AddUnicastAddress(aInstance, &address);
+
+    if (error == OT_ERROR_NONE)
+    {
+        ESP_LOGI(TAG, "Successfully added the unicast IPv6 address.\n");
+        char test[OT_IP6_ADDRESS_STRING_SIZE];
+        otIp6AddressToString(&ip6Addr, test, OT_IP6_ADDRESS_STRING_SIZE);
+        ESP_LOGI(TAG, "%s", test);
+    }
+    else
+    {
+        ESP_LOGE(TAG, "Failed to add the unicast IPv6 address: %d\n", error);
+    }
+}
 
 #if defined (GROVER_TEMP_HUM)
 static void handleTempGET(void *aContext, otMessage *aMessage, const otMessageInfo *aMessageInfo){
@@ -380,7 +418,7 @@ static void handleCoREFormatDescription(void *aContext, otMessage *aMessage, con
     #if defined (LED_STRIP)
     core += "</led>;rt=\"WS2812b Strip\";if=\"actuator\"",;
     #endif
-    core += "</builtin_led>;rt=\"WS2812b Strip\";if=\"actuator\"";
+    core += "</builtin_led>;rt=\"Builtin WS2812b Strip\";if=\"actuator\"";
     
     otMessageAppend(response, (const uint8_t *)core.data(), core.size());
 
@@ -676,6 +714,8 @@ static void sensor_data_loop(void *param) {
     vTaskDelay(pdMS_TO_TICKS(SLEEP_MS));
     initCoapServer(instance);
 
+    //AddUnicastAddress(instance);
+
     #if defined (GROVER_TEMP_HUM)
     Wire.begin(22, 12);
     TH02.begin();
@@ -749,6 +789,18 @@ static void sensor_data_loop(void *param) {
         }
         cJSON_AddNumberToObject(root, "tx_pwr", aPower);
 
+        // ot IPv6 addresses
+        cJSON *netifIPv6Addresses = cJSON_CreateArray();
+        otNetifAddress *netifAddress = otIp6GetUnicastAddresses(instance);
+        while(netifAddress->mNext != NULL){
+            char string_addr[OT_IP6_ADDRESS_STRING_SIZE];
+            otIp6AddressToString(&netifAddress->mAddress, string_addr, OT_IP6_ADDRESS_STRING_SIZE);
+            cJSON *str = cJSON_CreateString(string_addr);
+            cJSON_AddItemToArray(netifIPv6Addresses, str);
+            netifAddress = netifAddress->mNext;
+        }
+        cJSON_AddItemToObject(root, "ot_netif_ipv6_addr", netifIPv6Addresses);
+        
         // Iterate over each neighbor for RSSI values
         int i = 1;
         while (otThreadGetNextNeighborInfo(instance, &iterator, &neighborInfo) == OT_ERROR_NONE)
@@ -785,7 +837,7 @@ static void sensor_data_loop(void *param) {
         cJSON_AddNumberToObject(root, "humidity", hum);
                 
         #elif defined(GROVER_AIR_Q)
-        cJSON_AddNumberToObject(root, "GROVER_AIR_Quality", air_sensor_val);
+        cJSON_AddNumberToObject(root, "air_quality", air_sensor_val);
         #endif
         
         cJSON_AddItemToObject(root, "neighbor_rssi", rssi);
