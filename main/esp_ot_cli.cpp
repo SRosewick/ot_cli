@@ -67,7 +67,7 @@ extern "C" {
 #define REMOTE_PORT 18090
 
 // #define GROVER_TEMP_HUM
-#define GROVER_AIR_Q
+//#define GROVER_AIR_Q
 //#define SENSIRION_SCD30
 //#define ASAIR_AM2302
 //#define LED_STRIP
@@ -158,8 +158,8 @@ static void handleTempGET(void *aContext, otMessage *aMessage, const otMessageIn
     uint8_t *req_token = otCoapMessageGetToken(aMessage);
     otCoapMessageSetToken(response, req_token, req_token_length);
  
-    char ipv6AddrStr[40];
-    otIp6AddressToString(&aMessageInfo->mPeerAddr, ipv6AddrStr, sizeof(ipv6AddrStr));
+    char ipv6AddrStr[OT_IP6_ADDRESS_STRING_SIZE];
+    otIp6AddressToString(&aMessageInfo->mPeerAddr, ipv6AddrStr, OT_IP6_ADDRESS_STRING_SIZE);
     ESP_LOGI(TAG, "Sender IPv6 Address: %s", ipv6AddrStr);
     // Set the destination address
     memset(&messageInfo, 0, sizeof(messageInfo));
@@ -209,8 +209,8 @@ static void handleHumGET(void *aContext, otMessage *aMessage, const otMessageInf
     uint8_t *req_token = otCoapMessageGetToken(aMessage);
     otCoapMessageSetToken(response, req_token, req_token_length);
  
-    char ipv6AddrStr[40];
-    otIp6AddressToString(&aMessageInfo->mPeerAddr, ipv6AddrStr, sizeof(ipv6AddrStr));
+    char ipv6AddrStr[OT_IP6_ADDRESS_STRING_SIZE];
+    otIp6AddressToString(&aMessageInfo->mPeerAddr, ipv6AddrStr, OT_IP6_ADDRESS_STRING_SIZE);
     ESP_LOGI(TAG, "Sender IPv6 Address: %s", ipv6AddrStr);
     // Set the destination address
     memset(&messageInfo, 0, sizeof(messageInfo));
@@ -261,8 +261,8 @@ static void handleAirQGET(void *aContext, otMessage *aMessage, const otMessageIn
     uint8_t *req_token = otCoapMessageGetToken(aMessage);
     otCoapMessageSetToken(response, req_token, req_token_length);
  
-    char ipv6AddrStr[40];
-    otIp6AddressToString(&aMessageInfo->mPeerAddr, ipv6AddrStr, sizeof(ipv6AddrStr));
+    char ipv6AddrStr[OT_IP6_ADDRESS_STRING_SIZE];
+    otIp6AddressToString(&aMessageInfo->mPeerAddr, ipv6AddrStr, OT_IP6_ADDRESS_STRING_SIZE);
     ESP_LOGI(TAG, "Sender IPv6 Address: %s", ipv6AddrStr);
     // Set the destination address
     memset(&messageInfo, 0, sizeof(messageInfo));
@@ -394,8 +394,8 @@ static void handleCoREFormatDescription(void *aContext, otMessage *aMessage, con
     uint8_t *req_token = otCoapMessageGetToken(aMessage);
     otCoapMessageSetToken(response, req_token, req_token_length);
  
-    char ipv6AddrStr[40];
-    otIp6AddressToString(&aMessageInfo->mPeerAddr, ipv6AddrStr, sizeof(ipv6AddrStr));
+    char ipv6AddrStr[OT_IP6_ADDRESS_STRING_SIZE];
+    otIp6AddressToString(&aMessageInfo->mPeerAddr, ipv6AddrStr, OT_IP6_ADDRESS_STRING_SIZE);
     ESP_LOGI(TAG, "Sender IPv6 Address: %s", ipv6AddrStr);
     // Set the destination address
     memset(&messageInfo, 0, sizeof(messageInfo));
@@ -800,7 +800,7 @@ static void sensor_data_loop(void *param) {
             netifAddress = netifAddress->mNext;
         }
         cJSON_AddItemToObject(root, "ot_netif_ipv6_addr", netifIPv6Addresses);
-        
+
         // Iterate over each neighbor for RSSI values
         int i = 1;
         while (otThreadGetNextNeighborInfo(instance, &iterator, &neighborInfo) == OT_ERROR_NONE)
