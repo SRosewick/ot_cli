@@ -66,11 +66,11 @@ extern "C" {
 
 #define REMOTE_PORT 18090
 
-// #define GROVER_TEMP_HUM
+//#define GROVER_TEMP_HUM
 //#define GROVER_AIR_Q
 //#define SENSIRION_SCD30
 //#define ASAIR_AM2302
-//#define LED_STRIP
+#define LED_STRIP
 
 #define BULTIN_LED GPIO_NUM_8
 
@@ -321,7 +321,7 @@ static void handleLEDStripPostRequest(void *aContext, otMessage *aMessage, const
         uint16_t payloadLength = messageLength - offset;
 
         // Allocate a buffer to hold the payload
-        char *buffer = new char[payloadLength + 1];
+        char buffer[payloadLength + 1];
         memset(buffer, 0, payloadLength + 1);
 
         // Read the payload into the buffer
@@ -410,15 +410,15 @@ static void handleCoREFormatDescription(void *aContext, otMessage *aMessage, con
 
     std::string core;
     #if defined (GROVER_TEMP_HUM)
-    core += "</temperature>;rt=\"TemperatureC\";if=\"sensor\",";
-    core += "</humidity>;rt=\"HumidityRH\";if=\"sensor\",";
+    core += "</temperature>;rt=\"TemperatureC\";if=\"sensor\",\n";
+    core += "</humidity>;rt=\"HumidityRH\";if=\"sensor\",\n";
     #elif defined (GROVER_AIR_Q)
-    core+= "</sensors/airquality>;rt=\"AirQualitymV\";if=\"sensor\",";
+    core+= "</sensors/airquality>;rt=\"AirQualitymV\";if=\"sensor\",\n";
     #endif
     #if defined (LED_STRIP)
-    core += "</led>;rt=\"WS2812b Strip\";if=\"actuator\"",;
+    core += "</led>;rt=\"WS2812b Strip\";if=\"actuator\",\n";
     #endif
-    core += "</builtin_led>;rt=\"Builtin WS2812b Strip\";if=\"actuator\"";
+    core += "</builtin_led>;rt=\"Builtin WS2812b Strip\";if=\"actuator\"\n";
     
     otMessageAppend(response, (const uint8_t *)core.data(), core.size());
 
@@ -505,7 +505,7 @@ void coap_response_handler(void *aContext, otMessage *aMessage, const otMessageI
     if (bytesRead != payloadLength) {
         ESP_LOGE(TAG, "Failed to read full payload: expected %d, got %d", payloadLength, bytesRead);
         delete[] buffer;
-        return "";
+        return;
     }
 
     ESP_LOGI(TAG, "Response from Server: \"%s\"", buffer);
@@ -637,8 +637,6 @@ void send_coap_request_sensor_data_nat64(otInstance *instance, const char *messa
 
     otNat64SynthesizeIp6Address(esp_openthread_get_instance(), &ipv4_addr, &ipv6_addr);
     
-
-    // Create a CoAP message
     messageSettings.mLinkSecurityEnabled = true; // BR will drop Message if set to false
     messageSettings.mPriority = OT_MESSAGE_PRIORITY_NORMAL;
 
